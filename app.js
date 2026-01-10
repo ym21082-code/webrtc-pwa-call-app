@@ -39,6 +39,16 @@ pc.onicecandidate = event => {
   }
 };
 
+db.ref("candidates").on("child_added", snapshot => {
+  const candidate = new RTCIceCandidate(snapshot.val());
+  pc.addIceCandidate(candidate);
+});
+
+db.ref("candidates").on("child_added", snapshot => {
+  const candidate = new RTCIceCandidate(snapshot.val());
+  pc.addIceCandidate(candidate);
+});
+
 document.getElementById("callBtn").onclick = async () => {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
