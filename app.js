@@ -88,3 +88,12 @@ document.getElementById("answerBtn").onclick = async () => {
 
   db.ref("answer").set(answer);
 };
+// offer を受信（Callee のみ）
+db.ref("offer").on("value", async snapshot => {
+  if (role !== "callee") return;  // 応答側だけが offer を受信
+
+  const offer = snapshot.val();
+  if (offer && !pc.currentRemoteDescription) {
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+  }
+});
