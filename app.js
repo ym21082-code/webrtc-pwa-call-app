@@ -37,7 +37,6 @@ pc.onicecandidate = event => {
 document.getElementById("callBtn").onclick = async () => {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-
   db.ref("offer").set(offer);
 };
 
