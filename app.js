@@ -21,7 +21,9 @@ const pc = new RTCPeerConnection({
 });
 
 let localStream;
+let role = null; // ← 発信側 or 応答側を記録する
 
+// カメラ取得
 navigator.mediaDevices.getUserMedia({ video: true, audio: true })
   .then(stream => {
     localStream = stream;
@@ -29,54 +31,60 @@ navigator.mediaDevices.getUserMedia({ video: true, audio: true })
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
   });
 
+// 相手の映像を受信
 pc.ontrack = event => {
   document.getElementById("remoteVideo").srcObject = event.streams[0];
 };
 
+// ICE candidate を送信
 pc.onicecandidate = event => {
   if (event.candidate) {
     db.ref("candidates").push(event.candidate.toJSON());
   }
 };
 
+// ICE candidate を受信
 db.ref("candidates").on("child_added", snapshot => {
-  const candidate = new RTCIceCandidate(snapshot.val());
-  pc.addIceCandidate(candidate);
+  const candidate = snapshot.val();
+  pc.addIceCandidate(new RTCIceCandidate(candidate));
 });
 
-db.ref("candidates").on("child_added", snapshot => {
-  const candidate = new RTCIceCandidate(snapshot.val());
-  pc.addIceCandidate(candidate);
-});
-
+// ===============================
+// 発信側（Caller）
+// ===============================
 document.getElementById("callBtn").onclick = async () => {
+  role = "caller";
+
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
+
   db.ref("offer").set(offer);
 };
 
-document.getElementById("answerBtn").onclick = async () => {
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-
-  db.ref("answer").set(answer);
-};
-
-db.ref("offer").on("value", async snapshot => {
-  const offer = snapshot.val();
-  if (offer && !pc.currentRemoteDescription) {
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-  }
-});
-
+// answer を受信（Caller のみ）
 db.ref("answer").on("value", async snapshot => {
+  if (role !== "caller") return;
+
   const answer = snapshot.val();
   if (answer && pc.signalingState === "have-local-offer") {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
   }
 });
 
-db.ref("candidates").on("child_added", async snapshot => {
-  const candidate = snapshot.val();
-  await pc.addIceCandidate(new RTCIceCandidate(candidate));
-});
+// ===============================
+// 応答側（Callee）
+// ===============================
+document.getElementById("answerBtn").onclick = async () => {
+  role = "callee";
+
+  const offerSnapshot = await db.ref("offer").once("value");
+  const offer = offerSnapshot.val();
+  if (!offer) return;
+
+  await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  db.ref("answer").set(answer);
+};
