@@ -21,7 +21,7 @@ const pc = new RTCPeerConnection({
 });
 
 let localStream;
-let role = null; // ← 発信側 or 応答側を記録する
+let role = null; // "caller" or "callee"
 
 // カメラ取得
 navigator.mediaDevices.getUserMedia({ video: true, audio: true })
@@ -29,24 +29,36 @@ navigator.mediaDevices.getUserMedia({ video: true, audio: true })
     localStream = stream;
     document.getElementById("localVideo").srcObject = stream;
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
+  })
+  .catch(err => {
+    console.error("getUserMedia error:", err);
+    alert("カメラ・マイクの取得に失敗しました。許可設定を確認してください。");
   });
 
 // 相手の映像を受信
 pc.ontrack = event => {
+  console.log("ontrack:", event.streams[0]);
   document.getElementById("remoteVideo").srcObject = event.streams[0];
 };
 
 // ICE candidate を送信
 pc.onicecandidate = event => {
   if (event.candidate) {
+    console.log("local ICE candidate:", event.candidate);
     db.ref("candidates").push(event.candidate.toJSON());
   }
 };
 
-// ICE candidate を受信
+// ICE candidate を受信（両方）
 db.ref("candidates").on("child_added", snapshot => {
-  const candidate = snapshot.val();
-  pc.addIceCandidate(new RTCIceCandidate(candidate));
+  const data = snapshot.val();
+  if (!data) return;
+
+  const candidate = new RTCIceCandidate(data);
+  console.log("remote ICE candidate:", candidate);
+  pc.addIceCandidate(candidate).catch(err => {
+    console.error("addIceCandidate error:", err);
+  });
 });
 
 // ===============================
@@ -54,11 +66,18 @@ db.ref("candidates").on("child_added", snapshot => {
 // ===============================
 document.getElementById("callBtn").onclick = async () => {
   role = "caller";
+  console.log("role = caller");
+
+  // 既存のシグナリングデータをクリア（毎回クリーンな状態で開始）
+  await db.ref("offer").set(null);
+  await db.ref("answer").set(null);
+  await db.ref("candidates").set(null);
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
 
-  db.ref("offer").set(offer);
+  console.log("created offer:", offer);
+  await db.ref("offer").set(offer);
 };
 
 // answer を受信（Caller のみ）
@@ -66,8 +85,13 @@ db.ref("answer").on("value", async snapshot => {
   if (role !== "caller") return;
 
   const answer = snapshot.val();
-  if (answer && pc.signalingState === "have-local-offer") {
+  if (!answer) return;
+
+  if (pc.signalingState === "have-local-offer") {
+    console.log("setRemoteDescription(answer)");
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
+  } else {
+    console.log("answer 受信時の signalingState:", pc.signalingState);
   }
 });
 
@@ -76,24 +100,23 @@ db.ref("answer").on("value", async snapshot => {
 // ===============================
 document.getElementById("answerBtn").onclick = async () => {
   role = "callee";
+  console.log("role = callee");
 
-  const offerSnapshot = await db.ref("offer").once("value");
+  // offer を取得（まだ無い場合はエラー表示）
+  const offerSnapshot = await db.ref("offer").get();
   const offer = offerSnapshot.val();
-  if (!offer) return;
 
+  if (!offer) {
+    alert("まだ発信側の準備ができていません。発信側がボタンを押したあとに、もう一度「応答」を押してください。");
+    return;
+  }
+
+  console.log("got offer:", offer);
   await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
 
-  db.ref("answer").set(answer);
+  console.log("created answer:", answer);
+  await db.ref("answer").set(answer);
 };
-// offer を受信（Callee のみ）
-db.ref("offer").on("value", async snapshot => {
-  if (role !== "callee") return;  // 応答側だけが offer を受信
-
-  const offer = snapshot.val();
-  if (offer && !pc.currentRemoteDescription) {
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-  }
-});
