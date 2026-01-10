@@ -4,7 +4,7 @@ const firebaseConfig = {
   authDomain: "webrtc-call-app-7fcff.firebaseapp.com",
   databaseURL: "https://webrtc-call-app-7fcff-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "webrtc-call-app-7fcff",
-  storageBucket: "webrtc-call-app-7fcff.firebasestorage.app",
+  storageBucket: "webrtc-call-app-7fcff.appspot.com",
   messagingSenderId: "935797124048",
   appId: "1:935797124048:web:8183979656405373cee7d5",
   measurementId: "G-8714SHZEXC"
