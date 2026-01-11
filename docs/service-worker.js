@@ -7,6 +7,17 @@ self.addEventListener("activate", event => {
   );
 });
 
+// Push 通知を受信したとき
+self.addEventListener("push", event => {
+  const data = event.data.json();
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.message,
+      icon: "icon-192.png"
+    })
+  );
+});
+
 // === PWA キャッシュ ===
 const CACHE_NAME = "webrtc-pwa-cache-v1";
 const urlsToCache = [
