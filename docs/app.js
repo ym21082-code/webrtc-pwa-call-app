@@ -15,6 +15,7 @@ const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
 // Service Worker を登録
 async function registerSW() {
+  // ★ プロジェクトページ用に絶対パスに修正
   const reg = await navigator.serviceWorker.register("/webrtc-pwa-call-app/service-worker.js");
   return reg;
 }
@@ -100,7 +101,7 @@ pc.onicecandidate = event => {
   }
 };
 
-// ICE candidate を受信（キュー対応版）
+// ★ ICE candidate を受信（キュー対応版）
 db.ref("candidates").on("child_added", async snapshot => {
   const data = snapshot.val();
   if (!data) return;
@@ -128,7 +129,7 @@ document.getElementById("callBtn").onclick = async () => {
   role = "caller";
   console.log("role = caller");
 
-  // 既存のシグナリングデータをクリア
+  // 既存のシグナリングデータをクリア（毎回クリーンな状態で開始）
   await db.ref("offer").set(null);
   await db.ref("answer").set(null);
   await db.ref("candidates").set(null);
@@ -139,7 +140,7 @@ document.getElementById("callBtn").onclick = async () => {
   console.log("created offer:", offer);
   await db.ref("offer").set(offer);
 
-  // Push 通知：着信
+  // 相手に「発信したよ」と通知
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -166,6 +167,8 @@ db.ref("answer").on("value", async snapshot => {
       await pc.addIceCandidate(c);
     }
     pendingCandidates = [];
+  } else {
+    console.log("answer 受信時の signalingState:", pc.signalingState);
   }
 });
 
@@ -176,6 +179,7 @@ document.getElementById("answerBtn").onclick = async () => {
   role = "callee";
   console.log("role = callee");
 
+  // offer を取得（まだ無い場合はエラー表示）
   const offerSnapshot = await db.ref("offer").get();
   const offer = offerSnapshot.val();
 
@@ -193,7 +197,7 @@ document.getElementById("answerBtn").onclick = async () => {
   console.log("created answer:", answer);
   await db.ref("answer").set(answer);
 
-  // Push 通知：応答
+  // 相手に「通話に出たよ」と通知
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
