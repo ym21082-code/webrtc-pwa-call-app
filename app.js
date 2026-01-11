@@ -61,23 +61,6 @@ setupPush();
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// === Firebase Messaging ===
-const messaging = firebase.messaging();
-
-messaging.getToken({
-  vapidKey: "あなたのVAPID公開鍵をここに貼る"
-}).then(token => {
-  console.log("FCM token:", token);
-
-  // トークンを Firebase に保存
-  db.ref("tokens").push({
-    token: token,
-    timestamp: Date.now()
-  });
-}).catch(err => {
-  console.error("FCM token error:", err);
-});
-
 // === WebRTC ===
 const pc = new RTCPeerConnection({
   iceServers: [
