@@ -14,7 +14,7 @@ const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
 // Service Worker を登録
 async function registerSW() {
-  const reg = await navigator.serviceWorker.register("service-worker.js");
+  const reg = await navigator.serviceWorker.register("/webrtc-pwa-call-app/service-worker.js");
   return reg;
 }
 
