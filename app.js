@@ -9,6 +9,54 @@ const firebaseConfig = {
   appId: "1:935797124048:web:8183979656405373cee7d5",
   measurementId: "G-8714SHZEXC"
 };
+// === Push 通知設定 ===
+const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
+
+// Service Worker を登録
+async function registerSW() {
+  const reg = await navigator.serviceWorker.register("service-worker.js");
+  return reg;
+}
+
+// VAPID 公開鍵を取得
+async function getVapidKey() {
+  const res = await fetch(workerURL + "/vapidPublicKey");
+  return await res.text();
+}
+
+// Push 通知を購読して Worker に送信
+async function setupPush() {
+  const reg = await registerSW();
+  const vapidKey = await getVapidKey();
+
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(vapidKey),
+  });
+
+  await fetch(workerURL + "/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sub),
+  });
+
+  console.log("Push 通知の購読が完了しました");
+}
+
+// Base64URL → Uint8Array
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+// アプリ起動時に Push 通知を登録
+setupPush();
+
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
@@ -95,6 +143,16 @@ document.getElementById("callBtn").onclick = async () => {
 
   console.log("created offer:", offer);
   await db.ref("offer").set(offer);
+    // 相手に「発信したよ」と通知
+  await fetch(workerURL + "/notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "着信があります",
+      message: "相手があなたに発信しました"
+    }),
+  });
+
 };
 
 // answer を受信（Caller のみ）
@@ -136,4 +194,14 @@ document.getElementById("answerBtn").onclick = async () => {
 
   console.log("created answer:", answer);
   await db.ref("answer").set(answer);
+    // 相手に「通話に出たよ」と通知
+  await fetch(workerURL + "/notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "通話が開始されました",
+      message: "相手が通話に出ました"
+    }),
+  });
+
 };
