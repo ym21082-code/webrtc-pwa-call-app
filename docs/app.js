@@ -13,6 +13,9 @@ const firebaseConfig = {
 // === Push 通知設定 ===
 const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
+// ★ 今のタブの Push 購読情報を保持
+let currentSubscription = null;
+
 // Service Worker を登録
 async function registerSW() {
   // GitHub Pages 用に絶対パス
@@ -30,7 +33,7 @@ async function getVapidKey() {
 async function setupPush() {
   const reg = await registerSW();
 
-  // ★ これが超重要：SW が完全に ready になるまで待つ
+  // SW が完全に ready になるまで待つ
   await navigator.serviceWorker.ready;
   console.log("Service Worker is ready");
 
@@ -41,6 +44,10 @@ async function setupPush() {
     applicationServerKey: urlBase64ToUint8Array(vapidKey),
   });
 
+  // ★ グローバルに保持しておく（/notify で使う）
+  currentSubscription = sub;
+
+  // Worker 側の /subscribe はダミーだが、一応送っておく
   await fetch(workerURL + "/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -60,13 +67,17 @@ function urlBase64ToUint8Array(base64String) {
   const raw = atob(base64);
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
-Notification.requestPermission().then(() => {
-  new Notification("テスト通知", {
-    body: "これはテストです",
-    icon: "icon-192.png"
-  });
-});
 
+// ★ テスト通知（OS 側に「このサイトの通知を表示してよい」と学習させる）
+// もう役目を終えたら、このブロックは削除してもOK
+Notification.requestPermission().then(result => {
+  if (result === "granted") {
+    new Notification("テスト通知", {
+      body: "これはテストです",
+      icon: "icon-192.png"
+    });
+  }
+});
 
 // アプリ起動時に Push 通知を登録
 setupPush();
@@ -152,18 +163,27 @@ document.getElementById("callBtn").onclick = async () => {
   console.log("created offer:", offer);
   await db.ref("offer").set(offer);
 
-  // 相手に通知
+  // ★ currentSubscription がセットされていない場合は何もしない
+  if (!currentSubscription) {
+    console.warn("currentSubscription が未設定のため、通知は送信しません");
+    return;
+  }
+
+  // 相手に通知（購読情報ごと送る）
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       title: "着信があります",
-      message: "相手があなたに発信しました"
+      message: "相手があなたに発信しました",
+      subscription: currentSubscription,
     }),
   });
 };
 
+// ===============================
 // answer を受信（Caller）
+// ===============================
 db.ref("answer").on("value", async snapshot => {
   if (role !== "caller") return;
 
@@ -210,13 +230,19 @@ document.getElementById("answerBtn").onclick = async () => {
   console.log("created answer:", answer);
   await db.ref("answer").set(answer);
 
-  // 相手に通知
+  // ★ 応答側からも通知を送りたい場合
+  if (!currentSubscription) {
+    console.warn("currentSubscription が未設定のため、通知は送信しません");
+    return;
+  }
+
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       title: "通話が開始されました",
-      message: "相手が通話に出ました"
+      message: "相手が通話に出ました",
+      subscription: currentSubscription,
     }),
   });
 };
