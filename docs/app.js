@@ -16,20 +16,20 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 // ==============================
-// Push 通知 / Service Worker 設定
+// Push 通知 / Service Worker
 // ==============================
 const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
-let currentSubscription = null; // この端末の購読情報
+let currentSubscription = null; // この端末の Push 購読情報
 let role = null;                // "caller" or "callee"
 
-// Service Worker を登録
+// Service Worker 登録
 async function registerSW() {
   const reg = await navigator.serviceWorker.register("/webrtc-pwa-call-app/service-worker.js");
   return reg;
 }
 
-// VAPID 公開鍵を取得
+// VAPID 公開鍵取得
 async function getVapidKey() {
   const res = await fetch(workerURL + "/vapidPublicKey");
   return await res.text();
@@ -46,8 +46,16 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
-// Push 通知を購読（★ caller/callee 決定後に実行）
-async function setupPush() {
+// この端末の Push 購読を準備し、Firebase に保存
+async function ensurePushReady(forRole) {
+  // すでに購読済みなら、その情報を Firebase に保存して終わり
+  if (currentSubscription) {
+    await db.ref("subscriptions/" + forRole).set(currentSubscription);
+    console.log("Saved existing subscription for", forRole);
+    return;
+  }
+
+  // 初回購読
   const reg = await registerSW();
   await navigator.serviceWorker.ready;
 
@@ -60,21 +68,27 @@ async function setupPush() {
 
   currentSubscription = sub;
 
-  // Worker 側の /subscribe はダミー
+  // Worker 側との整合用に一応送る（サーバ保存はしない）
   await fetch(workerURL + "/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(sub),
   });
 
-  // ★ role が決まっているので Firebase に保存できる
-  if (role) {
-    await db.ref("subscriptions/" + role).set(sub);
-    console.log("Saved subscription for role:", role);
-  }
-
-  console.log("Push 通知の購読が完了しました");
+  // この端末の役割で Firebase に保存
+  await db.ref("subscriptions/" + forRole).set(sub);
+  console.log("Saved new subscription for", forRole);
 }
+
+// （任意）テスト通知：OS にこのサイトの通知を覚えさせる
+Notification.requestPermission().then(result => {
+  if (result === "granted") {
+    new Notification("テスト通知", {
+      body: "これはテストです",
+      icon: "icon-192.png"
+    });
+  }
+});
 
 // ==============================
 // WebRTC 設定
@@ -138,10 +152,10 @@ document.getElementById("callBtn").onclick = async () => {
   role = "caller";
   console.log("role = caller");
 
-  // ★ ここで購読を開始（初めて role が決まる）
-  await setupPush();
+  // この端末の購読情報を caller として登録
+  await ensurePushReady("caller");
 
-  // シグナリングデータをクリア
+  // シグナリングをクリア
   await db.ref("offer").set(null);
   await db.ref("answer").set(null);
   await db.ref("candidates").set(null);
@@ -150,7 +164,7 @@ document.getElementById("callBtn").onclick = async () => {
   await pc.setLocalDescription(offer);
   await db.ref("offer").set(offer);
 
-  // ★ 相手（callee）の購読情報を取得
+  // 相手（callee）の購読情報を取得
   const targetSnap = await db.ref("subscriptions/callee").get();
   const targetSub = targetSnap.val();
 
@@ -164,8 +178,9 @@ document.getElementById("callBtn").onclick = async () => {
         subscription: targetSub,
       }),
     });
+    console.log("Notified callee");
   } else {
-    console.warn("callee の購読情報がまだありません");
+    console.warn("subscriptions/callee がまだありません（相手がまだ購読していません）");
   }
 };
 
@@ -180,7 +195,11 @@ db.ref("answer").on("value", async snapshot => {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
     for (const c of pendingCandidates) {
-      await pc.addIceCandidate(c);
+      try {
+        await pc.addIceCandidate(c);
+      } catch (err) {
+        console.error("addIceCandidate (from queue) error:", err);
+      }
     }
     pendingCandidates = [];
   }
@@ -193,14 +212,14 @@ document.getElementById("answerBtn").onclick = async () => {
   role = "callee";
   console.log("role = callee");
 
-  // ★ ここで購読を開始（初めて role が決まる）
-  await setupPush();
+  // この端末の購読情報を callee として登録
+  await ensurePushReady("callee");
 
   const offerSnapshot = await db.ref("offer").get();
   const offer = offerSnapshot.val();
 
   if (!offer) {
-    alert("発信側がまだ準備できていません。");
+    alert("まだ発信側の準備ができていません。発信側がボタンを押したあとに、もう一度「応答」を押してください。");
     return;
   }
 
@@ -210,7 +229,7 @@ document.getElementById("answerBtn").onclick = async () => {
   await pc.setLocalDescription(answer);
   await db.ref("answer").set(answer);
 
-  // ★ 相手（caller）の購読情報を取得
+  // 相手（caller）の購読情報を取得
   const targetSnap = await db.ref("subscriptions/caller").get();
   const targetSub = targetSnap.val();
 
@@ -224,7 +243,8 @@ document.getElementById("answerBtn").onclick = async () => {
         subscription: targetSub,
       }),
     });
+    console.log("Notified caller");
   } else {
-    console.warn("caller の購読情報がまだありません");
+    console.warn("subscriptions/caller がまだありません（相手がまだ購読していません）");
   }
 };
