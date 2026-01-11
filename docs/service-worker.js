@@ -1,3 +1,10 @@
+self.addEventListener("install", event => {
+  self.registration.showNotification("通知の準備ができました", {
+    body: "この通知が見えたら、Push 通知が有効になっています。",
+    icon: "icon-192.png"
+  });
+});
+
 // === PWA キャッシュ ===
 const CACHE_NAME = "webrtc-pwa-cache-v1";
 const urlsToCache = [
