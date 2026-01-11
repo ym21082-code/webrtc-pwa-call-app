@@ -1,8 +1,10 @@
-self.addEventListener("install", event => {
-  self.registration.showNotification("通知の準備ができました", {
-    body: "この通知が見えたら、Push 通知が有効になっています。",
-    icon: "icon-192.png"
-  });
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    self.registration.showNotification("通知の準備ができました", {
+      body: "Push 通知が有効になりました。",
+      icon: "icon-192.png"
+    })
+  );
 });
 
 // === PWA キャッシュ ===
