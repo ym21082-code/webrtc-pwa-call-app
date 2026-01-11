@@ -100,7 +100,7 @@ pc.onicecandidate = event => {
   }
 };
 
-// ★ ICE candidate を受信（キュー対応版）
+// ICE candidate を受信（キュー対応版）
 db.ref("candidates").on("child_added", async snapshot => {
   const data = snapshot.val();
   if (!data) return;
