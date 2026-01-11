@@ -20,15 +20,11 @@ const db = firebase.database();
 // ==============================
 const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
-// この端末の Push 購読情報
-let currentSubscription = null;
-
-// この端末の役割（"caller" or "callee"）
-let role = null;
+let currentSubscription = null; // この端末の購読情報
+let role = null;                // "caller" or "callee"
 
 // Service Worker を登録
 async function registerSW() {
-  // GitHub Pages 用に絶対パス
   const reg = await navigator.serviceWorker.register("/webrtc-pwa-call-app/service-worker.js");
   return reg;
 }
@@ -50,12 +46,10 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
-// Push 通知を購読
+// Push 通知を購読（★ caller/callee 決定後に実行）
 async function setupPush() {
   const reg = await registerSW();
-
   await navigator.serviceWorker.ready;
-  console.log("Service Worker is ready");
 
   const vapidKey = await getVapidKey();
 
@@ -66,28 +60,21 @@ async function setupPush() {
 
   currentSubscription = sub;
 
-  // Worker 側の /subscribe はダミー（互換のため一応送る）
+  // Worker 側の /subscribe はダミー
   await fetch(workerURL + "/subscribe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(sub),
   });
 
+  // ★ role が決まっているので Firebase に保存できる
+  if (role) {
+    await db.ref("subscriptions/" + role).set(sub);
+    console.log("Saved subscription for role:", role);
+  }
+
   console.log("Push 通知の購読が完了しました");
 }
-
-// （任意）テスト通知：OS にこのサイトの通知を覚えさせる
-Notification.requestPermission().then(result => {
-  if (result === "granted") {
-    new Notification("テスト通知", {
-      body: "これはテストです",
-      icon: "icon-192.png"
-    });
-  }
-});
-
-// アプリ起動時に Push 通知を登録
-setupPush();
 
 // ==============================
 // WebRTC 設定
@@ -98,9 +85,7 @@ const pc = new RTCPeerConnection({
   ]
 });
 
-// ICE candidate のキュー
 let pendingCandidates = [];
-
 let localStream;
 
 // カメラ取得
@@ -117,28 +102,24 @@ navigator.mediaDevices.getUserMedia({ video: true, audio: true })
 
 // 相手の映像を受信
 pc.ontrack = event => {
-  console.log("ontrack:", event.streams[0]);
   document.getElementById("remoteVideo").srcObject = event.streams[0];
 };
 
 // ICE candidate を送信
 pc.onicecandidate = event => {
   if (event.candidate) {
-    console.log("local ICE candidate:", event.candidate);
     db.ref("candidates").push(event.candidate.toJSON());
   }
 };
 
-// ICE candidate を受信（キュー対応）
+// ICE candidate を受信
 db.ref("candidates").on("child_added", async snapshot => {
   const data = snapshot.val();
   if (!data) return;
 
   const candidate = new RTCIceCandidate(data);
-  console.log("remote ICE candidate:", candidate);
 
   if (!pc.remoteDescription) {
-    console.log("remoteDescription がまだ無いのでキューに保存");
     pendingCandidates.push(candidate);
     return;
   }
@@ -157,12 +138,8 @@ document.getElementById("callBtn").onclick = async () => {
   role = "caller";
   console.log("role = caller");
 
-  // 自分の購読情報を Firebase に保存
-  if (currentSubscription) {
-    await db.ref("subscriptions/caller").set(currentSubscription);
-  } else {
-    console.warn("currentSubscription が未設定です（Push 登録前に発信しました）");
-  }
+  // ★ ここで購読を開始（初めて role が決まる）
+  await setupPush();
 
   // シグナリングデータをクリア
   await db.ref("offer").set(null);
@@ -171,17 +148,13 @@ document.getElementById("callBtn").onclick = async () => {
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-
-  console.log("created offer:", offer);
   await db.ref("offer").set(offer);
 
-  // 相手（callee）の購読情報を取得して通知を送る
+  // ★ 相手（callee）の購読情報を取得
   const targetSnap = await db.ref("subscriptions/callee").get();
   const targetSub = targetSnap.val();
 
-  if (!targetSub) {
-    console.warn("subscriptions/callee が未登録のため、通知を送信できませんでした");
-  } else {
+  if (targetSub) {
     await fetch(workerURL + "/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -191,6 +164,8 @@ document.getElementById("callBtn").onclick = async () => {
         subscription: targetSub,
       }),
     });
+  } else {
+    console.warn("callee の購読情報がまだありません");
   }
 };
 
@@ -202,16 +177,10 @@ db.ref("answer").on("value", async snapshot => {
   if (!answer) return;
 
   if (pc.signalingState === "have-local-offer") {
-    console.log("setRemoteDescription(answer)");
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
-    // キューに溜まっていた ICE candidate を処理
     for (const c of pendingCandidates) {
-      try {
-        await pc.addIceCandidate(c);
-      } catch (err) {
-        console.error("addIceCandidate (from queue) error:", err);
-      }
+      await pc.addIceCandidate(c);
     }
     pendingCandidates = [];
   }
@@ -224,37 +193,28 @@ document.getElementById("answerBtn").onclick = async () => {
   role = "callee";
   console.log("role = callee");
 
-  // 自分の購読情報を Firebase に保存
-  if (currentSubscription) {
-    await db.ref("subscriptions/callee").set(currentSubscription);
-  } else {
-    console.warn("currentSubscription が未設定です（Push 登録前に応答しました）");
-  }
+  // ★ ここで購読を開始（初めて role が決まる）
+  await setupPush();
 
   const offerSnapshot = await db.ref("offer").get();
   const offer = offerSnapshot.val();
 
   if (!offer) {
-    alert("まだ発信側の準備ができていません。発信側がボタンを押したあとに、もう一度「応答」を押してください。");
+    alert("発信側がまだ準備できていません。");
     return;
   }
 
-  console.log("got offer:", offer);
   await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
-
-  console.log("created answer:", answer);
   await db.ref("answer").set(answer);
 
-  // 相手（caller）の購読情報を取得して通知を送る
+  // ★ 相手（caller）の購読情報を取得
   const targetSnap = await db.ref("subscriptions/caller").get();
   const targetSub = targetSnap.val();
 
-  if (!targetSub) {
-    console.warn("subscriptions/caller が未登録のため、通知を送信できませんでした");
-  } else {
+  if (targetSub) {
     await fetch(workerURL + "/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -264,5 +224,7 @@ document.getElementById("answerBtn").onclick = async () => {
         subscription: targetSub,
       }),
     });
+  } else {
+    console.warn("caller の購読情報がまだありません");
   }
 };
