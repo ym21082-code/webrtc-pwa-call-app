@@ -29,6 +29,7 @@ async function getVapidKey() {
 // Push 通知を購読して Worker に送信
 async function setupPush() {
   const reg = await registerSW();
+  await navigator.serviceWorker.ready;
   const vapidKey = await getVapidKey();
 
   const sub = await reg.pushManager.subscribe({
