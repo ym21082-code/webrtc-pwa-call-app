@@ -1,3 +1,4 @@
+// === PWA キャッシュ ===
 const CACHE_NAME = "webrtc-pwa-cache-v1";
 const urlsToCache = [
   "./",
@@ -19,5 +20,28 @@ self.addEventListener("install", event => {
 self.addEventListener("fetch", event => {
   event.respondWith(
     caches.match(event.request).then(response => response || fetch(event.request))
+  );
+});
+
+// === Cloudflare Worker からの Push 通知受信 ===
+self.addEventListener("push", event => {
+  const data = event.data ? event.data.json() : {};
+
+  const title = data.title || "通知";
+  const message = data.message || "メッセージがあります";
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: message,
+      icon: "icon-192.png"
+    })
+  );
+});
+
+// 通知クリック時の動作
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  event.waitUntil(
+    clients.openWindow("./index.html")
   );
 });
