@@ -15,7 +15,7 @@ const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
 // Service Worker を登録
 async function registerSW() {
-  // ★ プロジェクトページ用に絶対パスに修正
+  // GitHub Pages 用に絶対パス
   const reg = await navigator.serviceWorker.register("/webrtc-pwa-call-app/service-worker.js");
   return reg;
 }
@@ -29,7 +29,11 @@ async function getVapidKey() {
 // Push 通知を購読して Worker に送信
 async function setupPush() {
   const reg = await registerSW();
+
+  // ★ これが超重要：SW が完全に ready になるまで待つ
   await navigator.serviceWorker.ready;
+  console.log("Service Worker is ready");
+
   const vapidKey = await getVapidKey();
 
   const sub = await reg.pushManager.subscribe({
@@ -70,7 +74,7 @@ const pc = new RTCPeerConnection({
   ]
 });
 
-// ★ ICE candidate のキュー
+// ICE candidate のキュー
 let pendingCandidates = [];
 
 let localStream;
@@ -102,7 +106,7 @@ pc.onicecandidate = event => {
   }
 };
 
-// ★ ICE candidate を受信（キュー対応版）
+// ICE candidate を受信（キュー対応）
 db.ref("candidates").on("child_added", async snapshot => {
   const data = snapshot.val();
   if (!data) return;
@@ -130,7 +134,7 @@ document.getElementById("callBtn").onclick = async () => {
   role = "caller";
   console.log("role = caller");
 
-  // 既存のシグナリングデータをクリア（毎回クリーンな状態で開始）
+  // シグナリングデータをクリア
   await db.ref("offer").set(null);
   await db.ref("answer").set(null);
   await db.ref("candidates").set(null);
@@ -141,7 +145,7 @@ document.getElementById("callBtn").onclick = async () => {
   console.log("created offer:", offer);
   await db.ref("offer").set(offer);
 
-  // 相手に「発信したよ」と通知
+  // 相手に通知
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -152,7 +156,7 @@ document.getElementById("callBtn").onclick = async () => {
   });
 };
 
-// answer を受信（Caller のみ）
+// answer を受信（Caller）
 db.ref("answer").on("value", async snapshot => {
   if (role !== "caller") return;
 
@@ -163,7 +167,7 @@ db.ref("answer").on("value", async snapshot => {
     console.log("setRemoteDescription(answer)");
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
 
-    // ★ キューに溜まっていた ICE candidate を処理
+    // キューに溜まっていた ICE candidate を処理
     for (const c of pendingCandidates) {
       try {
         await pc.addIceCandidate(c);
@@ -172,8 +176,6 @@ db.ref("answer").on("value", async snapshot => {
       }
     }
     pendingCandidates = [];
-  } else {
-    console.log("answer 受信時の signalingState:", pc.signalingState);
   }
 });
 
@@ -184,7 +186,6 @@ document.getElementById("answerBtn").onclick = async () => {
   role = "callee";
   console.log("role = callee");
 
-  // offer を取得（まだ無い場合はエラー表示）
   const offerSnapshot = await db.ref("offer").get();
   const offer = offerSnapshot.val();
 
@@ -202,7 +203,7 @@ document.getElementById("answerBtn").onclick = async () => {
   console.log("created answer:", answer);
   await db.ref("answer").set(answer);
 
-  // 相手に「通話に出たよ」と通知
+  // 相手に通知
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
