@@ -72,8 +72,8 @@ function urlBase64ToUint8Array(base64String) {
 // もう役目を終えたら、このブロックは削除してもOK
 Notification.requestPermission().then(result => {
   if (result === "granted") {
-    new Notification("テスト通知", {
-      body: "これはテストです",
+    new Notification("起動通知", {
+      body: "アプリが起動されました。発信か応答を押してください",
       icon: "icon-192.png"
     });
   }
