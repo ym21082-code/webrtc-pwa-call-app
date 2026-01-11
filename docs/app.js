@@ -164,7 +164,11 @@ db.ref("answer").on("value", async snapshot => {
 
     // ★ キューに溜まっていた ICE candidate を処理
     for (const c of pendingCandidates) {
-      await pc.addIceCandidate(c);
+      try {
+        await pc.addIceCandidate(c);
+      } catch (err) {
+        console.error("addIceCandidate (from queue) error:", err);
+      }
     }
     pendingCandidates = [];
   } else {
