@@ -1,4 +1,6 @@
-// === Firebase 初期化 ===
+// ==============================
+// Firebase 初期化
+// ==============================
 const firebaseConfig = {
   apiKey: "AIzaSyDWSg2w91ChlChqXHqFAbzFx8grTDokShc",
   authDomain: "webrtc-call-app-7fcff.firebaseapp.com",
@@ -10,11 +12,19 @@ const firebaseConfig = {
   measurementId: "G-8714SHZEXC"
 };
 
-// === Push 通知設定 ===
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// ==============================
+// Push 通知 / Service Worker 設定
+// ==============================
 const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
-// ★ 今のタブの Push 購読情報を保持
+// この端末の Push 購読情報
 let currentSubscription = null;
+
+// この端末の役割（"caller" or "callee"）
+let role = null;
 
 // Service Worker を登録
 async function registerSW() {
@@ -29,34 +39,6 @@ async function getVapidKey() {
   return await res.text();
 }
 
-// Push 通知を購読して Worker に送信
-async function setupPush() {
-  const reg = await registerSW();
-
-  // SW が完全に ready になるまで待つ
-  await navigator.serviceWorker.ready;
-  console.log("Service Worker is ready");
-
-  const vapidKey = await getVapidKey();
-
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidKey),
-  });
-
-  // ★ グローバルに保持しておく（/notify で使う）
-  currentSubscription = sub;
-
-  // Worker 側の /subscribe はダミーだが、一応送っておく
-  await fetch(workerURL + "/subscribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(sub),
-  });
-
-  console.log("Push 通知の購読が完了しました");
-}
-
 // Base64URL → Uint8Array
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -68,12 +50,37 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
-// ★ テスト通知（OS 側に「このサイトの通知を表示してよい」と学習させる）
-// もう役目を終えたら、このブロックは削除してもOK
+// Push 通知を購読
+async function setupPush() {
+  const reg = await registerSW();
+
+  await navigator.serviceWorker.ready;
+  console.log("Service Worker is ready");
+
+  const vapidKey = await getVapidKey();
+
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(vapidKey),
+  });
+
+  currentSubscription = sub;
+
+  // Worker 側の /subscribe はダミー（互換のため一応送る）
+  await fetch(workerURL + "/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sub),
+  });
+
+  console.log("Push 通知の購読が完了しました");
+}
+
+// （任意）テスト通知：OS にこのサイトの通知を覚えさせる
 Notification.requestPermission().then(result => {
   if (result === "granted") {
-    new Notification("起動通知", {
-      body: "アプリが起動されました。発信か応答を押してください",
+    new Notification("テスト通知", {
+      body: "これはテストです",
       icon: "icon-192.png"
     });
   }
@@ -82,10 +89,9 @@ Notification.requestPermission().then(result => {
 // アプリ起動時に Push 通知を登録
 setupPush();
 
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
-
-// === WebRTC ===
+// ==============================
+// WebRTC 設定
+// ==============================
 const pc = new RTCPeerConnection({
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" }
@@ -96,7 +102,6 @@ const pc = new RTCPeerConnection({
 let pendingCandidates = [];
 
 let localStream;
-let role = null; // "caller" or "callee"
 
 // カメラ取得
 navigator.mediaDevices.getUserMedia({ video: true, audio: true })
@@ -152,6 +157,13 @@ document.getElementById("callBtn").onclick = async () => {
   role = "caller";
   console.log("role = caller");
 
+  // 自分の購読情報を Firebase に保存
+  if (currentSubscription) {
+    await db.ref("subscriptions/caller").set(currentSubscription);
+  } else {
+    console.warn("currentSubscription が未設定です（Push 登録前に発信しました）");
+  }
+
   // シグナリングデータをクリア
   await db.ref("offer").set(null);
   await db.ref("answer").set(null);
@@ -163,27 +175,26 @@ document.getElementById("callBtn").onclick = async () => {
   console.log("created offer:", offer);
   await db.ref("offer").set(offer);
 
-  // ★ currentSubscription がセットされていない場合は何もしない
-  if (!currentSubscription) {
-    console.warn("currentSubscription が未設定のため、通知は送信しません");
-    return;
-  }
+  // 相手（callee）の購読情報を取得して通知を送る
+  const targetSnap = await db.ref("subscriptions/callee").get();
+  const targetSub = targetSnap.val();
 
-  // 相手に通知（購読情報ごと送る）
-  await fetch(workerURL + "/notify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      title: "着信があります",
-      message: "相手があなたに発信しました",
-      subscription: currentSubscription,
-    }),
-  });
+  if (!targetSub) {
+    console.warn("subscriptions/callee が未登録のため、通知を送信できませんでした");
+  } else {
+    await fetch(workerURL + "/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "着信があります",
+        message: "相手があなたに発信しました",
+        subscription: targetSub,
+      }),
+    });
+  }
 };
 
-// ===============================
 // answer を受信（Caller）
-// ===============================
 db.ref("answer").on("value", async snapshot => {
   if (role !== "caller") return;
 
@@ -213,6 +224,13 @@ document.getElementById("answerBtn").onclick = async () => {
   role = "callee";
   console.log("role = callee");
 
+  // 自分の購読情報を Firebase に保存
+  if (currentSubscription) {
+    await db.ref("subscriptions/callee").set(currentSubscription);
+  } else {
+    console.warn("currentSubscription が未設定です（Push 登録前に応答しました）");
+  }
+
   const offerSnapshot = await db.ref("offer").get();
   const offer = offerSnapshot.val();
 
@@ -230,19 +248,21 @@ document.getElementById("answerBtn").onclick = async () => {
   console.log("created answer:", answer);
   await db.ref("answer").set(answer);
 
-  // ★ 応答側からも通知を送りたい場合
-  if (!currentSubscription) {
-    console.warn("currentSubscription が未設定のため、通知は送信しません");
-    return;
-  }
+  // 相手（caller）の購読情報を取得して通知を送る
+  const targetSnap = await db.ref("subscriptions/caller").get();
+  const targetSub = targetSnap.val();
 
-  await fetch(workerURL + "/notify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      title: "通話が開始されました",
-      message: "相手が通話に出ました",
-      subscription: currentSubscription,
-    }),
-  });
+  if (!targetSub) {
+    console.warn("subscriptions/caller が未登録のため、通知を送信できませんでした");
+  } else {
+    await fetch(workerURL + "/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "通話が開始されました",
+        message: "相手が通話に出ました",
+        subscription: targetSub,
+      }),
+    });
+  }
 };
