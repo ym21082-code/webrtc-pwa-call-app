@@ -9,6 +9,7 @@ const firebaseConfig = {
   appId: "1:935797124048:web:8183979656405373cee7d5",
   measurementId: "G-8714SHZEXC"
 };
+
 // === Push 通知設定 ===
 const workerURL = "https://fancy-rain-ff61.ym21082.workers.dev";
 
@@ -57,7 +58,6 @@ function urlBase64ToUint8Array(base64String) {
 // アプリ起動時に Push 通知を登録
 setupPush();
 
-
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
@@ -67,6 +67,9 @@ const pc = new RTCPeerConnection({
     { urls: "stun:stun.l.google.com:19302" }
   ]
 });
+
+// ★ ICE candidate のキュー
+let pendingCandidates = [];
 
 let localStream;
 let role = null; // "caller" or "callee"
@@ -97,16 +100,25 @@ pc.onicecandidate = event => {
   }
 };
 
-// ICE candidate を受信（両方）
-db.ref("candidates").on("child_added", snapshot => {
+// ★ ICE candidate を受信（キュー対応版）
+db.ref("candidates").on("child_added", async snapshot => {
   const data = snapshot.val();
   if (!data) return;
 
   const candidate = new RTCIceCandidate(data);
   console.log("remote ICE candidate:", candidate);
-  pc.addIceCandidate(candidate).catch(err => {
+
+  if (!pc.remoteDescription) {
+    console.log("remoteDescription がまだ無いのでキューに保存");
+    pendingCandidates.push(candidate);
+    return;
+  }
+
+  try {
+    await pc.addIceCandidate(candidate);
+  } catch (err) {
     console.error("addIceCandidate error:", err);
-  });
+  }
 });
 
 // ===============================
@@ -116,7 +128,7 @@ document.getElementById("callBtn").onclick = async () => {
   role = "caller";
   console.log("role = caller");
 
-  // 既存のシグナリングデータをクリア（毎回クリーンな状態で開始）
+  // 既存のシグナリングデータをクリア
   await db.ref("offer").set(null);
   await db.ref("answer").set(null);
   await db.ref("candidates").set(null);
@@ -126,7 +138,8 @@ document.getElementById("callBtn").onclick = async () => {
 
   console.log("created offer:", offer);
   await db.ref("offer").set(offer);
-    // 相手に「発信したよ」と通知
+
+  // Push 通知：着信
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -135,7 +148,6 @@ document.getElementById("callBtn").onclick = async () => {
       message: "相手があなたに発信しました"
     }),
   });
-
 };
 
 // answer を受信（Caller のみ）
@@ -148,8 +160,12 @@ db.ref("answer").on("value", async snapshot => {
   if (pc.signalingState === "have-local-offer") {
     console.log("setRemoteDescription(answer)");
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
-  } else {
-    console.log("answer 受信時の signalingState:", pc.signalingState);
+
+    // ★ キューに溜まっていた ICE candidate を処理
+    for (const c of pendingCandidates) {
+      await pc.addIceCandidate(c);
+    }
+    pendingCandidates = [];
   }
 });
 
@@ -160,7 +176,6 @@ document.getElementById("answerBtn").onclick = async () => {
   role = "callee";
   console.log("role = callee");
 
-  // offer を取得（まだ無い場合はエラー表示）
   const offerSnapshot = await db.ref("offer").get();
   const offer = offerSnapshot.val();
 
@@ -177,7 +192,8 @@ document.getElementById("answerBtn").onclick = async () => {
 
   console.log("created answer:", answer);
   await db.ref("answer").set(answer);
-    // 相手に「通話に出たよ」と通知
+
+  // Push 通知：応答
   await fetch(workerURL + "/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -186,5 +202,4 @@ document.getElementById("answerBtn").onclick = async () => {
       message: "相手が通話に出ました"
     }),
   });
-
 };
