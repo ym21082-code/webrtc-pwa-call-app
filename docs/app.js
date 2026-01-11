@@ -60,6 +60,13 @@ function urlBase64ToUint8Array(base64String) {
   const raw = atob(base64);
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
+Notification.requestPermission().then(() => {
+  new Notification("テスト通知", {
+    body: "これはテストです",
+    icon: "icon-192.png"
+  });
+});
+
 
 // アプリ起動時に Push 通知を登録
 setupPush();
