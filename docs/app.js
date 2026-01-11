@@ -25,7 +25,7 @@ let role = null;                // "caller" or "callee"
 
 // Service Worker 登録
 async function registerSW() {
-  const reg = await navigator.serviceWorker.register("/webrtc-pwa-call-app/service-worker.js");
+  const reg = await navigator.serviceWorker.register("./service-worker.js");
   return reg;
 }
 
