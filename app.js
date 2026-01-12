@@ -49,11 +49,11 @@ function urlBase64ToUint8Array(base64String) {
 // この端末の Push 購読を準備し、Firebase に保存
 async function ensurePushReady(forRole) {
   // すでに購読済みなら、その情報を Firebase に保存して終わり
-  if (currentSubscription) {
-    await db.ref("subscriptions/" + forRole).set(currentSubscription);
-    console.log("Saved existing subscription for", forRole);
-    return;
-  }
+ if (currentSubscription) {
+  await db.ref("subscriptions/" + forRole).set(JSON.parse(JSON.stringify(currentSubscription)));
+  console.log("Saved existing subscription for", forRole);
+  return;
+}
 
   // 初回購読
   const reg = await registerSW();
