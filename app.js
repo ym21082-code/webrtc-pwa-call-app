@@ -76,7 +76,7 @@ async function ensurePushReady(forRole) {
   });
 
   // この端末の役割で Firebase に保存
-  await db.ref("subscriptions/" + forRole).set(sub);
+  await db.ref("subscriptions/" + forRole).set(JSON.parse(JSON.stringify(sub)));
   console.log("Saved new subscription for", forRole);
 }
 
