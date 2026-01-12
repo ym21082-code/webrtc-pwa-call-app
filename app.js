@@ -164,25 +164,46 @@ document.getElementById("callBtn").onclick = async () => {
   await pc.setLocalDescription(offer);
   await db.ref("offer").set(offer);
 
-  // 相手（callee）の購読情報を取得
-  const targetSnap = await db.ref("subscriptions/callee").get();
-  const targetSub = targetSnap.val();
+ let targetSub = null;
 
-  if (targetSub) {
-    await fetch(workerURL + "/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: "着信があります",
-        message: "相手があなたに発信しました",
-        subscription: targetSub,
-      }),
-    });
-    console.log("Notified callee");
-  } else {
-    console.warn("subscriptions/callee がまだありません（相手がまだ購読していません）");
-  }
-};
+console.log("Waiting for callee subscription...");
+
+targetSub = await new Promise((resolve) => {
+  const ref = db.ref("subscriptions/callee");
+  const timeoutMs = 10000;
+  const start = Date.now();
+
+  const off = ref.on("value", snap => {
+    const v = snap.val();
+    if (v) {
+      console.log("Callee subscription arrived");
+      ref.off("value", off);
+      resolve(v);
+    } else {
+      if (Date.now() - start > timeoutMs) {
+        console.log("Callee subscription wait timeout");
+        ref.off("value", off);
+        resolve(null);
+      }
+    }
+  });
+});
+
+if (targetSub) {
+  await fetch(workerURL + "/notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "着信があります",
+      message: "相手があなたに発信しました",
+      subscription: targetSub,
+    }),
+  });
+  console.log("Notified callee");
+} else {
+  console.warn("subscriptions/callee がまだありません（相手がまだ購読していません）");
+}
+
 
 // answer を受信（Caller）
 db.ref("answer").on("value", async snapshot => {
