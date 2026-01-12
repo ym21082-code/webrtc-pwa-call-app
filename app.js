@@ -215,13 +215,45 @@ document.getElementById("answerBtn").onclick = async () => {
   // この端末の購読情報を callee として登録
   await ensurePushReady("callee");
 
-  const offerSnapshot = await db.ref("offer").get();
-  const offer = offerSnapshot.val();
+  console.log("Waiting for offer...");
+
+  // まず一度現在の値を確認
+  let offerSnapshot = await db.ref("offer").get();
+  let offer = offerSnapshot.val();
+
+  // まだなければ、最大 10 秒くらい待つ
+  if (!offer) {
+    console.log("No offer yet. Start watching for offer...");
+
+    offer = await new Promise((resolve) => {
+      const ref = db.ref("offer");
+      const timeoutMs = 10000;
+      const start = Date.now();
+
+      const off = ref.on("value", snap => {
+        const v = snap.val();
+        if (v) {
+          console.log("Offer arrived via listener");
+          ref.off("value", off);
+          resolve(v);
+        } else {
+          // タイムアウトチェック
+          if (Date.now() - start > timeoutMs) {
+            console.log("Offer wait timeout");
+            ref.off("value", off);
+            resolve(null);
+          }
+        }
+      });
+    });
+  }
 
   if (!offer) {
     alert("まだ発信側の準備ができていません。発信側がボタンを押したあとに、もう一度「応答」を押してください。");
     return;
   }
+
+  console.log("Using offer:", offer);
 
   await pc.setRemoteDescription(new RTCSessionDescription(offer));
 
