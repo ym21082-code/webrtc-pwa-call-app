@@ -160,52 +160,56 @@ document.getElementById("callBtn").onclick = async () => {
   await db.ref("answer").set(null);
   await db.ref("candidates").set(null);
 
+  // offer 作成・保存
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   await db.ref("offer").set(offer);
 
- let targetSub = null;
+  // 相手（callee）の購読情報を待つ
+  let targetSub = null;
 
-console.log("Waiting for callee subscription...");
+  console.log("Waiting for callee subscription...");
 
-targetSub = await new Promise((resolve) => {
-  const ref = db.ref("subscriptions/callee");
-  const timeoutMs = 10000;
-  const start = Date.now();
+  targetSub = await new Promise((resolve) => {
+    const ref = db.ref("subscriptions/callee");
+    const timeoutMs = 10000;
+    const start = Date.now();
 
-  const off = ref.on("value", snap => {
-    const v = snap.val();
-    if (v) {
-      console.log("Callee subscription arrived");
-      ref.off("value", off);
-      resolve(v);
-    } else {
-      if (Date.now() - start > timeoutMs) {
-        console.log("Callee subscription wait timeout");
+    const off = ref.on("value", snap => {
+      const v = snap.val();
+      if (v) {
+        console.log("Callee subscription arrived");
         ref.off("value", off);
-        resolve(null);
+        resolve(v);
+      } else {
+        if (Date.now() - start > timeoutMs) {
+          console.log("Callee subscription wait timeout");
+          ref.off("value", off);
+          resolve(null);
+        }
       }
-    }
+    });
   });
-});
 
-if (targetSub) {
-  await fetch(workerURL + "/notify", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      title: "着信があります",
-      message: "相手があなたに発信しました",
-      subscription: targetSub,
-    }),
-  });
-  console.log("Notified callee");
-} else {
-  console.warn("subscriptions/callee がまだありません（相手がまだ購読していません）");
-}
+  if (targetSub) {
+    await fetch(workerURL + "/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "着信があります",
+        message: "相手があなたに発信しました",
+        subscription: targetSub,
+      }),
+    });
+    console.log("Notified callee");
+  } else {
+    console.warn("subscriptions/callee がまだありません（相手がまだ購読していません）");
+  }
+};
 
-
+// ===============================
 // answer を受信（Caller）
+// ===============================
 db.ref("answer").on("value", async snapshot => {
   if (role !== "caller") return;
 
